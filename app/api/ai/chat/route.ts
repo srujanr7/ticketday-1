@@ -4,11 +4,14 @@ import { supabase } from "@/lib/supabase"
 
 // Initialize the Google Generative AI model with the API key
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY })
-const geminiModel = genAI.models.get("gemini-2.0-flash")
 
 export async function POST(request: Request) {
   try {
     const { message, history } = await request.json()
+
+    if (!message) {
+      return NextResponse.json({ error: "Message is required" }, { status: 400 })
+    }
 
     // Get user information from the session
     const {
@@ -42,64 +45,49 @@ export async function POST(request: Request) {
       .select("integration_type, status")
       .eq("user_id", userId)
 
+    // Create a system prompt with context about the user's projects, tasks, and integrations
+    const systemInstruction = `
+      You are an AI assistant for the TaskFlow project management application.
+      
+      User Information:
+      - User ID: ${userId}
+      
+      Projects (${projects?.length || 0}):
+      ${projects?.map((p) => `- ${p.name}: ${p.description || "No description"}`).join("\n") || "No projects found"}
+      
+      Recent Tasks (${tasks?.length || 0}):
+      ${tasks?.map((t) => `- ${t.title} (${t.status}, ${t.priority}${t.due_date ? `, due: ${t.due_date}` : ""})`).join("\n") || "No tasks found"}
+      
+      Integrations:
+      ${integrations?.map((i) => `- ${i.integration_type}: ${i.status}`).join("\n") || "No integrations found"}
+      
+      You can help with:
+      1. Answering questions about projects and tasks
+      2. Providing productivity tips
+      3. Explaining TaskFlow features
+      4. Suggesting workflow improvements
+      5. Searching across projects, tasks, and integrations
+      
+      Be concise, helpful, and friendly in your responses.
+    `
+
     // Format the conversation history for the AI
     const formattedHistory = history.map((msg: any) => ({
-      role: msg.role,
+      role: msg.role === "assistant" ? "model" : "user",
       parts: [{ text: msg.content }],
     }))
 
-    // Create a system prompt with context about the user's projects, tasks, and integrations
-    const systemPrompt = {
-      role: "system",
-      parts: [
-        {
-          text: `
-        You are an AI assistant for the TaskFlow project management application.
-        
-        User Information:
-        - User ID: ${userId}
-        
-        Projects (${projects?.length || 0}):
-        ${projects?.map((p) => `- ${p.name}: ${p.description || "No description"}`).join("\n") || "No projects found"}
-        
-        Recent Tasks (${tasks?.length || 0}):
-        ${tasks?.map((t) => `- ${t.title} (${t.status}, ${t.priority}${t.due_date ? `, due: ${t.due_date}` : ""})`).join("\n") || "No tasks found"}
-        
-        Integrations:
-        ${integrations?.map((i) => `- ${i.integration_type}: ${i.status}`).join("\n") || "No integrations found"}
-        
-        You can help with:
-        1. Answering questions about projects and tasks
-        2. Providing productivity tips
-        3. Explaining TaskFlow features
-        4. Suggesting workflow improvements
-        5. Searching across projects, tasks, and integrations
-        
-        Be concise, helpful, and friendly in your responses.
-      `,
-        },
-      ],
-    }
-
-    // Add the user's new message
-    const userMessage = {
-      role: "user",
-      parts: [{ text: message }],
-    }
-
-    // Combine system prompt, history, and new message
-    const chatHistory = [systemPrompt, ...formattedHistory, userMessage]
-
-    // Generate a response from the AI
-    const result = await geminiModel.generateContent({
-      contents: chatHistory,
-      generationConfig: {
+    // Generate a response from the AI using the correct method
+    const response = await genAI.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [...formattedHistory, { role: "user", parts: [{ text: message }] }],
+      config: {
         temperature: 0.7,
         maxOutputTokens: 800,
+        systemInstruction: systemInstruction,
       },
     })
 
-    const response = result.response
     const text = response.text()
 
     return NextResponse.json({ response: text })
