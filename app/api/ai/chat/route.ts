@@ -88,7 +88,8 @@ export async function POST(request: Request) {
       },
     })
 
-    const text = response.text()
+    // Access the text property instead of calling a method
+    const text = response.text
 
     return NextResponse.json({ response: text })
   } catch (error) {
